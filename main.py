@@ -18,9 +18,7 @@ def run_backend():
     else:
         python = Path("backend/sd_scripts/venv/Scripts/python.exe")
     with contextlib.suppress(Exception):
-        subprocess.check_call(
-            f"{python} backend/main.py backend", shell=sys.platform == "linux"
-        )
+        subprocess.check_call([str(python), "-X", "utf8", "backend/main.py", "backend"])
 
 
 def CreateConfig():

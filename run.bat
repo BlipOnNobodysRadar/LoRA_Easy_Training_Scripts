@@ -1,7 +1,6 @@
 @echo off
 
 title LoRA Trainer - 67372a Fork - Refresh Branch
-cd %~dp0
-call venv\Scripts\activate
-python main.py
-pause
+cd /d "%~dp0"
+"%~dp0venv\Scripts\python.exe" -X utf8 main.py
+if errorlevel 1 pause

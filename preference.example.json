@@ -1,0 +1,46 @@
+{
+  "training": {
+    "rank": 16,
+    "learning_rate": 1E-05,
+    "allow_synthetic": false,
+    "max_steps": 50,
+    "checkpoint_every": 25,
+    "strength_weights": {
+      "normal": 1,
+      "slight": 0.5,
+      "strong": 2
+    },
+    "seed": 9796,
+    "gradient_accumulation": 4,
+    "beta": 5000,
+    "output_dir": "preference_runs",
+    "alpha": 16,
+    "deterministic": true
+  },
+  "generation": {
+    "height": 1024,
+    "negative_prompt": "blurry, low quality, text, watermark",
+    "prompts": [
+      "a watercolor landscape of a quiet forest lake",
+      "a detailed illustration of a mountain village at dawn"
+    ],
+    "validation_fraction": 0.2,
+    "width": 1024,
+    "steps": 25,
+    "split_seed": 9796,
+    "sampler": "euler",
+    "cfg": 7,
+    "pairs_per_prompt": 2,
+    "seed": 9796
+  },
+  "dataset_dir": "preference_data",
+  "schema_version": 1,
+  "model": {
+    "family": "sdxl",
+    "preference_weight": 1,
+    "max_token_length": 225,
+    "checkpoint": "D:/models/sdxl.safetensors",
+    "base_loras": [],
+    "preference_lora": null
+  }
+}

@@ -33,6 +33,10 @@ class MainWindow(QMainWindow, QtStyleTools):
         # Add TensorBoard action to Utils menu
         self.tensorboard_action = QAction("Toggle TensorBoard", self)  # Changed text to indicate toggle functionality
         self.widget.menuUtils.addAction(self.tensorboard_action)
+        self.preference_action = QAction("Preferences / DPO...", self)
+        self.preference_action.triggered.connect(self.open_preferences)
+        self.widget.menuUtils.addAction(self.preference_action)
+        self.preference_window = None
         
         self.setMinimumWidth(739)
         screen_size = QApplication.screens()[0].size()
@@ -43,6 +47,14 @@ class MainWindow(QMainWindow, QtStyleTools):
             750,
         )
         self.centralWidget().layout().addWidget(self.main_widget)
+
+    def open_preferences(self) -> None:
+        from main_ui_files.PreferenceWindow import PreferenceWindow
+        if self.preference_window is None:
+            self.preference_window = PreferenceWindow(self)
+        self.preference_window.show()
+        self.preference_window.raise_()
+        self.preference_window.activateWindow()
 
     def setup_themes(self) -> None:
         themes_path = Path("css/themes")
@@ -178,6 +190,12 @@ class MainWindow(QMainWindow, QtStyleTools):
                 self.tensorboard_process = None
 
     def closeEvent(self, event):
+        if self.preference_window is not None and self.preference_window._job_running():
+            self.preference_window._request_stop()
+            self.preference_window.show()
+            self.preference_window._set_status("Stopping the preference job. Close the trainer after it finishes.")
+            event.ignore()
+            return
         # Clean up TensorBoard process if it's running
         if hasattr(self, 'tensorboard_process') and self.tensorboard_process is not None:
             print("Shutting down TensorBoard...")

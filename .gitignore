@@ -188,3 +188,8 @@ config.json
 .zoo/
 .roomodes
 /plans
+
+# Local preference datasets, runs, and machine paths
+preference_data/
+preference_runs/
+*.local.json

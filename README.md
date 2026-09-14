@@ -1,3 +1,12 @@
+# Experimental SDXL preference training (this fork)
+
+Use `run_preferences.bat` or **Utils → Preferences / DPO** to collect A/B ratings
+and train a separate preference LoRA from an SDXL checkpoint, optionally with
+frozen starting LoRAs. See the [preference guide](backend/preference/README.md)
+and [example configuration](preference.example.json). Ordinary training remains
+available through `run.bat`. This branch is experimental; synthetic execution
+tests do not establish improved image quality.
+
 # Updates
 
 ## 05/30/2026
