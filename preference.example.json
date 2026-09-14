@@ -19,10 +19,9 @@
   },
   "generation": {
     "height": 1024,
-    "negative_prompt": "blurry, low quality, text, watermark",
     "prompts": [
-      "a watercolor landscape of a quiet forest lake",
-      "a detailed illustration of a mountain village at dawn"
+      {"prompt": "a watercolor landscape of a quiet forest lake", "negative_prompt": "blurry, low quality, text, watermark", "pairs": 20},
+      {"prompt": "a detailed illustration of a mountain village at dawn", "negative_prompt": "blurry, text", "pairs": 5}
     ],
     "validation_fraction": 0.2,
     "width": 1024,
@@ -30,7 +29,6 @@
     "split_seed": 9796,
     "sampler": "euler",
     "cfg": 7,
-    "pairs_per_prompt": 2,
     "seed": 9796
   },
   "dataset_dir": "preference_data",

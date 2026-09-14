@@ -85,6 +85,50 @@ class PreferenceUITests(unittest.TestCase):
         self.assertEqual(cfg['training']['alpha'], 12.5)
         self.assertEqual(cfg['training']['strength_weights'], {'slight':.3})
 
+    def test_prompt_rows_add_remove_and_save_load_preserve_each_setting(self):
+        editor = self.window.cfg_prompts
+        editor.add_btn.click()
+        editor.rows[0].prompt_edit.setPlainText('first prompt\nwith another line')
+        editor.rows[0].negative_edit.setPlainText('no blur')
+        editor.rows[0].pairs_spin.setValue(20)
+        editor.add_btn.click()
+        editor.rows[1].prompt_edit.setPlainText('remove me')
+        editor.add_btn.click()
+        editor.rows[2].prompt_edit.setPlainText('second prompt')
+        editor.rows[2].pairs_spin.setValue(5)
+        editor.rows[1].remove_btn.click()
+        expected = [{'prompt': 'first prompt\nwith another line', 'negative_prompt': 'no blur', 'pairs': 20},
+                    {'prompt': 'second prompt', 'negative_prompt': '', 'pairs': 5}]
+        self.assertEqual(editor.entries(), expected)
+        self.assertEqual(editor.rows[1].title(), 'Prompt 2')
+        self.assertIn('25 pairs / 50 images', editor.summary_label.text())
+        self.assertTrue(self.window._save_config())
+        self.assertEqual(self.window.cfg_prompts.entries(), expected)
+        saved = json.loads(self.config.read_text())['generation']
+        self.assertEqual(saved['prompts'], expected)
+        self.assertNotIn('negative_prompt', saved)
+        self.assertNotIn('pairs_per_prompt', saved)
+        self.assertEqual(self.store.counts()['rated'], 0)
+
+    def test_old_prompt_config_migrates_and_blank_added_row_blocks_save(self):
+        raw = json.loads(self.config.read_text())
+        raw['generation'].update(prompts=['first', 'second'], negative_prompt='shared', pairs_per_prompt=20)
+        self.config.write_text(json.dumps(raw))
+        self.window._load_config()
+        editor = self.window.cfg_prompts
+        self.assertEqual(editor.entries(), [dict(prompt=p, negative_prompt='shared', pairs=20)
+                                            for p in ('first', 'second')])
+        editor.add_btn.click()
+        before = self.config.read_bytes()
+        self.assertFalse(self.window._save_config())
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertIn('Prompt 3', self.window.status_label.text())
+        for row in editor.rows[:]:
+            row.remove_btn.click()
+        self.assertEqual(editor.entries(), [])
+        self.assertTrue(editor.add_btn.isEnabled())
+        self.assertEqual(self.window._collect_config()['generation']['prompts'], [])
+
     def test_wheel_zooms_at_pointer_without_changing_other_image_or_rating(self):
         w = self.window
         w.show()

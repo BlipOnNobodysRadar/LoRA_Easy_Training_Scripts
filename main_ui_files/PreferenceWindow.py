@@ -42,8 +42,9 @@ from PySide6.QtWidgets import (
 )
 
 from backend.preference.store import PreferenceStore
-from backend.preference.config import atomic_json, load_config
+from backend.preference.config import atomic_json, load_config, prompt_entries
 from main_ui_files.PreferenceImageView import PreferenceImageView, image_panel
+from main_ui_files.PreferencePromptEditor import PreferencePromptEditor
 
 SAMPLERS = ["euler", "ddim", "dpmpp_2m"]
 QUALITY_CHOICES = [
@@ -262,13 +263,8 @@ class PreferenceWindow(QDialog):
         self.cfg_output_dir = self._dir_row(form, "Output directory (new run parent)")
         self.cfg_resume_dir = self._dir_row(form, "Resume checkpoint directory")
 
-        self.cfg_prompts = QPlainTextEdit()
-        self.cfg_prompts.setPlaceholderText("One prompt per line")
-        self.cfg_prompts.setFixedHeight(90)
-        form.addRow("Prompts (one per line)", self.cfg_prompts)
-        self.cfg_negative = QPlainTextEdit()
-        self.cfg_negative.setFixedHeight(50)
-        form.addRow("Negative prompt", self.cfg_negative)
+        self.cfg_prompts = PreferencePromptEditor()
+        form.addRow("Generation prompts", self.cfg_prompts)
 
         res_row = QWidget()
         res_layout = QHBoxLayout(res_row)
@@ -288,8 +284,6 @@ class PreferenceWindow(QDialog):
         form.addRow("Sampler", self.cfg_sampler)
         self.cfg_seed = QLineEdit()
         form.addRow("Seed", self.cfg_seed)
-        self.cfg_pairs = QSpinBox(); self.cfg_pairs.setRange(1, 64)
-        form.addRow("Pairs per prompt", self.cfg_pairs)
         self.cfg_split_seed = QLineEdit()
         form.addRow("Split seed", self.cfg_split_seed)
 
@@ -317,13 +311,17 @@ class PreferenceWindow(QDialog):
         save_btn = QPushButton("Save config")
         gen_btn = QPushButton("Generate pairs")
         train_btn = QPushButton("Train")
+        self.combine_btn = QPushButton("Export combined LoRA...")
+        self.combine_btn.setAutoDefault(False)
+        self.combine_btn.setToolTip("Combine an existing DPO checkpoint with the original LoRA stack into one new inference file.")
         stop_btn = QPushButton("Request stop")
         load_btn.clicked.connect(self._choose_and_load_config)
         save_btn.clicked.connect(lambda: self._save_config())
         gen_btn.clicked.connect(self._launch_generate)
         train_btn.clicked.connect(self._launch_train)
+        self.combine_btn.clicked.connect(self._launch_combine)
         stop_btn.clicked.connect(self._request_stop)
-        for btn in (load_btn, save_btn, gen_btn, train_btn, stop_btn):
+        for btn in (load_btn, save_btn, gen_btn, train_btn, self.combine_btn, stop_btn):
             btns.addWidget(btn)
         btns.addStretch(1)
         outer.addLayout(btns)
@@ -393,6 +391,8 @@ class PreferenceWindow(QDialog):
                 for item in self._config.get("model", {}).get("base_loras", []):
                     if item.get("path") and not Path(item["path"]).is_absolute():
                         item["path"] = str((self._config_path.parent / item["path"]).resolve())
+                # Validate/migrate prompt rows before passing them to Qt controls.
+                self._config.setdefault("generation", {})["prompts"] = prompt_entries(self._config.get("generation", {}))
             except (OSError, ValueError) as exc:
                 self._set_status("Could not load config: %s" % exc, error=True)
                 self._config = {}
@@ -416,8 +416,7 @@ class PreferenceWindow(QDialog):
 
         self.cfg_dataset_dir.setText(str(cfg.get("dataset_dir") or ""))
         self.cfg_output_dir.setText(str(train.get("output_dir") or ""))
-        self.cfg_prompts.setPlainText("\n".join(gen.get("prompts") or []))
-        self.cfg_negative.setPlainText(str(gen.get("negative_prompt") or ""))
+        self.cfg_prompts.set_entries(prompt_entries(gen))
         self.cfg_width.setValue(int(gen.get("width", 1024)))
         self.cfg_height.setValue(int(gen.get("height", 1024)))
         self.cfg_steps.setValue(int(gen.get("steps", 25)))
@@ -426,7 +425,6 @@ class PreferenceWindow(QDialog):
         if sampler in SAMPLERS:
             self.cfg_sampler.setCurrentText(sampler)
         self.cfg_seed.setText(str(gen.get("seed", 9796)))
-        self.cfg_pairs.setValue(int(gen.get("pairs_per_prompt", 1)))
         self.cfg_split_seed.setText(str(gen.get("split_seed", 9796)))
 
         self.cfg_rank.setValue(int(train.get("rank", 16)))
@@ -457,15 +455,17 @@ class PreferenceWindow(QDialog):
         model["preference_weight"] = self.cfg_pref_weight.value()
 
         cfg["dataset_dir"] = self.cfg_dataset_dir.text().strip()
-        gen["prompts"] = [p.strip() for p in self.cfg_prompts.toPlainText().splitlines() if p.strip()]
-        gen["negative_prompt"] = self.cfg_negative.toPlainText().strip()
+        gen["prompts"] = prompt_entries({"prompts": self.cfg_prompts.entries()})
+        # Each row is explicit after a GUI save; legacy shared defaults are no
+        # longer needed and would be misleading when hand-editing the JSON.
+        gen.pop("negative_prompt", None)
+        gen.pop("pairs_per_prompt", None)
         gen["width"] = self.cfg_width.value()
         gen["height"] = self.cfg_height.value()
         gen["steps"] = self.cfg_steps.value()
         gen["cfg"] = self.cfg_cfg.value()
         gen["sampler"] = self.cfg_sampler.currentText()
         gen["seed"] = int(self.cfg_seed.text())
-        gen["pairs_per_prompt"] = self.cfg_pairs.value()
         gen["split_seed"] = int(self.cfg_split_seed.text())
 
         train["output_dir"] = self.cfg_output_dir.text().strip()
@@ -764,6 +764,22 @@ class PreferenceWindow(QDialog):
         if resume:
             args += ["--resume", resume]
         self._launch(args)
+
+    def _launch_combine(self):
+        if self._job_running():
+            self._set_status("A job is already running; wait for it to finish.", error=True)
+            return
+        preference, _ = QFileDialog.getOpenFileName(
+            self, "Choose the separate preference_lora checkpoint", self.cfg_output_dir.text(), "LoRA (*.safetensors)")
+        if not preference:
+            return
+        original = self.cfg_lora_path.text().strip()
+        name = Path(original).stem + "_DPO.safetensors" if original else "DPO_lora.safetensors"
+        output, _ = QFileDialog.getSaveFileName(
+            self, "Export a new combined LoRA (existing files are preserved)",
+            str(Path(preference).parent / name), "LoRA (*.safetensors)")
+        if output:
+            self._launch(["combine", "--preference", preference, "--output", output])
 
     def _launch(self, command):
         if self._job_running():

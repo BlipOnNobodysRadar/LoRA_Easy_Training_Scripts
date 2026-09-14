@@ -12,6 +12,14 @@ fullscreen). **Mouse-wheel zoom** centers on the pointer independently in each
 image; drag to pan. Each pane has **Fit** and **100%** controls. Changing to another
 comparison resets both views to fit. Double-click opens a larger, zoomable preview.
 
+Configuration has **Add prompt** / **Remove prompt** controls. Each prompt has
+its own positive text, negative text and pair count, with a live pair/image total.
+Multiline text belongs to one prompt; legacy shared settings load into equivalent
+individual rows. Completed DPO runs with starting LoRAs also export a **combined
+inference LoRA**. Use **Export combined LoRA...** for an existing checkpoint.
+Load that combined file by itself on the recorded SDXL checkpoint, at weight 1.
+The separate `preference_lora.safetensors` still needs the original adapter stack.
+
 # Updates
 
 ## 05/30/2026
