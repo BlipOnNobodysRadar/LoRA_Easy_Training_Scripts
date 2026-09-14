@@ -78,12 +78,18 @@ class PreferenceUITests(unittest.TestCase):
         self.assertEqual(w._current()['id'], '1')
 
     def test_configuration_preserves_precision_and_advanced_fields(self):
+        optimization = {'optimizer': {'type': 'SimplifiedAdEMAMixExM',
+                                      'args': {'beta1_warmup': 'total_steps'}},
+                        'lr_schedule': {'type': 'rawr'}, 'max_grad_norm': 0.0}
+        self.window._config['training'].update(copy.deepcopy(optimization))
         cfg = self.window._collect_config()
         self.assertEqual(cfg['model']['base_loras'][0]['weight'], 0)
         self.assertEqual(len(cfg['model']['base_loras']), 2)
         self.assertEqual(cfg['generation']['seed'], 2**40)
         self.assertEqual(cfg['training']['alpha'], 12.5)
         self.assertEqual(cfg['training']['strength_weights'], {'slight':.3})
+        for key, value in optimization.items():
+            self.assertEqual(cfg['training'][key], value)
 
     def test_edit_modes_keep_values_and_disable_dpo_only_controls(self):
         options = self.window.cfg_adaptation
