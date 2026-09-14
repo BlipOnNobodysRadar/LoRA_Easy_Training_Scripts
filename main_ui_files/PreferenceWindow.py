@@ -19,8 +19,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QProcess, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QProcess
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -36,7 +35,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QScrollArea,
-    QSizePolicy,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -45,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from backend.preference.store import PreferenceStore
 from backend.preference.config import atomic_json, load_config
+from main_ui_files.PreferenceImageView import PreferenceImageView, image_panel
 
 SAMPLERS = ["euler", "ddim", "dpmpp_2m"]
 QUALITY_CHOICES = [
@@ -87,54 +86,18 @@ def _backend_python() -> str:
     return sys.executable
 
 
-class _ImageLabel(QLabel):
-    """Aspect-ratio preserving image preview; double-click shows full size."""
-
-    doubleClicked = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._pixmap = None
-        self.setAlignment(Qt.AlignCenter)
-        self.setMinimumSize(220, 220)
-        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self.setFrameShape(QFrame.StyledPanel)
-        self.setWordWrap(True)
-        self.setText("No image")
-
-    def set_image(self, path):
-        pixmap = QPixmap(str(path)) if path else QPixmap()
-        self._pixmap = None if pixmap.isNull() else pixmap
-        if self._pixmap is None:
-            self.setPixmap(QPixmap())
-            self.setText("Image not found:\n%s" % (path or "(none)"))
-        self._rescale()
-
-    def _rescale(self):
-        if self._pixmap is None:
-            return
-        self.setPixmap(
-            self._pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        )
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._rescale()
-
-    def mouseDoubleClickEvent(self, event):
-        if self._pixmap is not None:
-            self.doubleClicked.emit()
-        super().mouseDoubleClickEvent(event)
-
-
 class PreferenceWindow(QDialog):
     """Non-modal rating + configuration dialog."""
 
     def __init__(self, parent=None, config_path=None):
         super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
         self.setWindowTitle("Preference Rating")
         self.setModal(False)
         self.resize(1100, 760)
+        self._previous_window_state = Qt.WindowNoState
+        self._fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
+        self._fullscreen_shortcut.activated.connect(self._toggle_fullscreen)
 
         self._config = {}
         local = _repo_root() / "preference.local.json"
@@ -155,9 +118,31 @@ class PreferenceWindow(QDialog):
         root = QVBoxLayout(self)
         root.addWidget(tabs)
         root.addWidget(self.status_label)
+        self.fullscreen_btn = QPushButton("Fullscreen (F11)")
+        self.fullscreen_btn.setAutoDefault(False)
+        self.fullscreen_btn.clicked.connect(self._toggle_fullscreen)
+        tabs.setCornerWidget(self.fullscreen_btn, Qt.TopRightCorner)
 
         self._load_config()
         self._reload_store()
+
+    def _toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.setWindowState(self._previous_window_state)
+            self.fullscreen_btn.setText("Fullscreen (F11)")
+        else:
+            self._previous_window_state = self.windowState()
+            self.showFullScreen()
+            self.fullscreen_btn.setText("Exit fullscreen (F11)")
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            if self.isFullScreen():
+                self._toggle_fullscreen()
+            # QDialog otherwise closes on Escape, which could destroy a worker.
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     # ------------------------------------------------------------------ rate
     def _build_rate_tab(self) -> QWidget:
@@ -184,15 +169,11 @@ class PreferenceWindow(QDialog):
         layout.addWidget(self.prompt_label)
 
         splitter = QSplitter(Qt.Horizontal)
-        self.image_a = _ImageLabel()
-        self.image_b = _ImageLabel()
+        self.image_a = PreferenceImageView()
+        self.image_b = PreferenceImageView()
         for label, text in ((self.image_a, "A"), (self.image_b, "B")):
             label.doubleClicked.connect(lambda lab=label: self._show_full_size(lab))
-            wrapper = QWidget()
-            box = QVBoxLayout(wrapper)
-            box.addWidget(QLabel("Image %s" % text))
-            box.addWidget(label, 1)
-            splitter.addWidget(wrapper)
+            splitter.addWidget(image_panel("Image %s" % text, label))
         layout.addWidget(splitter, 1)
 
         pref_row = QHBoxLayout()
@@ -253,7 +234,8 @@ class PreferenceWindow(QDialog):
         layout.addLayout(actions)
 
         hint = QLabel(
-            "Relative buttons only select a choice. Nothing is written until Save, "
+            "Wheel: zoom · Drag: pan · Double-click: larger preview. "
+            "Nothing is written until Save, "
             "Save & Next, or Skip. Navigation never stores a rating."
         )
         hint.setWordWrap(True)
@@ -747,16 +729,19 @@ class PreferenceWindow(QDialog):
         if label._pixmap is None:
             return
         dialog = QDialog(self)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowMinMaxButtonsHint)
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
         dialog.setWindowTitle("Full size preview")
         layout = QVBoxLayout(dialog)
-        view = QLabel()
-        view.setPixmap(label._pixmap)
-        scroll = QScrollArea()
-        scroll.setWidget(view)
-        layout.addWidget(scroll)
+        view = PreferenceImageView()
+        view.set_image(label._pixmap)
+        view.setToolTip("Mouse wheel: zoom at pointer. Drag: pan. Double-click: fit image.")
+        view.doubleClicked.connect(view.fit_to_view)
+        layout.addWidget(image_panel("Image detail", view))
         dialog.resize(min(label._pixmap.width() + 40, 1400),
                       min(label._pixmap.height() + 40, 1000))
         dialog.show()
+        view.actual_size()
 
     # ------------------------------------------------------------------ jobs
     def _jobs_dir(self) -> Path:

@@ -8,7 +8,9 @@ import unittest
 from pathlib import Path
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtGui import QImage, QColor
+from PySide6.QtCore import Qt, QPoint, QPointF
+from PySide6.QtGui import QImage, QColor, QWheelEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from main_ui_files.PreferenceWindow import PreferenceWindow
 from backend.preference.config import utc_now
@@ -82,6 +84,62 @@ class PreferenceUITests(unittest.TestCase):
         self.assertEqual(cfg['generation']['seed'], 2**40)
         self.assertEqual(cfg['training']['alpha'], 12.5)
         self.assertEqual(cfg['training']['strength_weights'], {'slight':.3})
+
+    def test_wheel_zooms_at_pointer_without_changing_other_image_or_rating(self):
+        w = self.window
+        w.show()
+        app.processEvents()
+        a, b = w.image_a, w.image_b
+        original = a._pixmap.toImage()
+        b_scale = b._scale
+        anchor = QPointF(a.width() / 2, a.height() / 2) + QPointF(0, 20)
+        before = a.image_point(anchor)
+        event = QWheelEvent(anchor, QPointF(a.mapToGlobal(anchor.toPoint())), QPoint(),
+                            QPoint(0, 120), Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False)
+        app.sendEvent(a, event)
+        self.assertGreater(a._scale, a._fit_scale())
+        self.assertLess((a.image_point(anchor) - before).manhattanLength(), 1e-6)
+        self.assertEqual(b._scale, b_scale)
+        self.assertEqual(a._pixmap.toImage(), original)
+        self.assertEqual(self.store.counts()['rated'], 0)
+
+    def test_drag_pan_actual_size_and_fit_reset(self):
+        w = self.window
+        w.show()
+        app.processEvents()
+        a = w.image_a
+        center = a.contentsRect().center()
+        event = QWheelEvent(QPointF(center), QPointF(a.mapToGlobal(center)), QPoint(),
+                            QPoint(0, 600), Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False)
+        app.sendEvent(a, event)
+        before = a.image_point(center)
+        QTest.mousePress(a, Qt.LeftButton, pos=center)
+        QTest.mouseMove(a, center + QPoint(15, 15))
+        QTest.mouseRelease(a, Qt.LeftButton, pos=center + QPoint(15, 15))
+        self.assertGreater((a.image_point(center) - before).manhattanLength(), 1)
+        a.actual_size()
+        self.assertEqual(a._scale, 1)
+        w._navigate(1)
+        self.assertTrue(a._fit_mode)
+        self.assertAlmostEqual(a._scale, a._fit_scale())
+
+    def test_fullscreen_escape_restores_maximized_window_and_unsaved_rating(self):
+        w = self.window
+        self.assertTrue(w.windowFlags() & Qt.WindowMaximizeButtonHint)
+        w.showMaximized()
+        app.processEvents()
+        w._pref_buttons[1][0].click()
+        w.fullscreen_btn.click()
+        app.processEvents()
+        self.assertTrue(w.isFullScreen())
+        QTest.keyClick(w, Qt.Key_Escape)
+        app.processEvents()
+        self.assertFalse(w.isFullScreen())
+        self.assertTrue(w.isMaximized())
+        self.assertEqual((w._sel_pref, w._sel_strength), ('a', 'slight'))
+        QTest.keyClick(w, Qt.Key_Escape)
+        self.assertTrue(w.isVisible())
+        self.assertEqual(self.store.counts()['rated'], 0)
 
 
 if __name__ == '__main__':

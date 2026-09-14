@@ -7,6 +7,11 @@ and [example configuration](preference.example.json). Ordinary training remains
 available through `run.bat`. This branch is experimental; synthetic execution
 tests do not establish improved image quality.
 
+The rating window supports normal maximize and **F11 fullscreen** (Escape exits
+fullscreen). **Mouse-wheel zoom** centers on the pointer independently in each
+image; drag to pan. Each pane has **Fit** and **100%** controls. Changing to another
+comparison resets both views to fit. Double-click opens a larger, zoomable preview.
+
 # Updates
 
 ## 05/30/2026
