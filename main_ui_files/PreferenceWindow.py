@@ -45,6 +45,7 @@ from backend.preference.store import PreferenceStore
 from backend.preference.config import atomic_json, load_config, prompt_entries
 from main_ui_files.PreferenceImageView import PreferenceImageView, image_panel
 from main_ui_files.PreferencePromptEditor import PreferencePromptEditor
+from main_ui_files.AdaptationOptions import AdaptationOptions
 
 SAMPLERS = ["euler", "ddim", "dpmpp_2m"]
 QUALITY_CHOICES = [
@@ -203,6 +204,7 @@ class PreferenceWindow(QDialog):
         self.quality_b = QComboBox()
         qual_row.addWidget(self.quality_b)
         for combo in (self.quality_a, self.quality_b):
+            combo.setToolTip("Saved for review only. Training uses the A/B winner and preference strength.")
             for label, value in QUALITY_CHOICES:
                 combo.addItem(label, value)
         qual_row.addStretch(1)
@@ -262,6 +264,8 @@ class PreferenceWindow(QDialog):
         self.cfg_dataset_dir = self._dir_row(form, "Dataset directory")
         self.cfg_output_dir = self._dir_row(form, "Output directory (new run parent)")
         self.cfg_resume_dir = self._dir_row(form, "Resume checkpoint directory")
+        self.cfg_adaptation = AdaptationOptions()
+        form.addRow(self.cfg_adaptation)
 
         self.cfg_prompts = PreferencePromptEditor()
         form.addRow("Generation prompts", self.cfg_prompts)
@@ -288,13 +292,14 @@ class PreferenceWindow(QDialog):
         form.addRow("Split seed", self.cfg_split_seed)
 
         self.cfg_rank = QSpinBox(); self.cfg_rank.setRange(1, 512)
-        form.addRow("DPO rank", self.cfg_rank)
+        form.addRow("Adapter rank", self.cfg_rank)
         self.cfg_alpha = QDoubleSpinBox(); self.cfg_alpha.setRange(0.001, 8192); self.cfg_alpha.setDecimals(3)
-        form.addRow("DPO alpha", self.cfg_alpha)
+        form.addRow("Adapter alpha", self.cfg_alpha)
         self.cfg_lr = QLineEdit()
         form.addRow("Learning rate", self.cfg_lr)
         self.cfg_beta = QLineEdit()
         form.addRow("DPO beta", self.cfg_beta)
+        self.cfg_adaptation.objective_changed.connect(lambda mode: self.cfg_beta.setEnabled(mode == "dpo"))
         self.cfg_max_steps = QSpinBox(); self.cfg_max_steps.setRange(1, 1_000_000)
         form.addRow("Max steps", self.cfg_max_steps)
         self.cfg_grad_accum = QSpinBox(); self.cfg_grad_accum.setRange(1, 512)
@@ -311,9 +316,12 @@ class PreferenceWindow(QDialog):
         save_btn = QPushButton("Save config")
         gen_btn = QPushButton("Generate pairs")
         train_btn = QPushButton("Train")
+        self.import_btn = QPushButton("Import aligned edit...")
+        self.import_btn.setAutoDefault(False)
+        self.import_btn.clicked.connect(self._import_aligned_edit)
         self.combine_btn = QPushButton("Export combined LoRA...")
         self.combine_btn.setAutoDefault(False)
-        self.combine_btn.setToolTip("Combine an existing DPO checkpoint with the original LoRA stack into one new inference file.")
+        self.combine_btn.setToolTip("Combine a trained adjustment with the original LoRA stack into one new inference file.")
         stop_btn = QPushButton("Request stop")
         load_btn.clicked.connect(self._choose_and_load_config)
         save_btn.clicked.connect(lambda: self._save_config())
@@ -325,6 +333,13 @@ class PreferenceWindow(QDialog):
             btns.addWidget(btn)
         btns.addStretch(1)
         outer.addLayout(btns)
+        import_row = QHBoxLayout()
+        import_row.addWidget(self.import_btn)
+        import_note = QLabel("Before/after images are copied into the dataset for you to rate.")
+        import_note.setWordWrap(True)
+        import_row.addWidget(import_note)
+        import_row.addStretch(1)
+        outer.addLayout(import_row)
 
         self.job_label = QLabel("No job running")
         self.job_label.setWordWrap(True)
@@ -434,6 +449,8 @@ class PreferenceWindow(QDialog):
         self.cfg_max_steps.setValue(int(train.get("max_steps", 50)))
         self.cfg_grad_accum.setValue(int(train.get("gradient_accumulation", 4)))
         self.cfg_ckpt_every.setValue(int(train.get("checkpoint_every", 25)))
+        self.cfg_adaptation.set_settings(train)
+        self.cfg_beta.setEnabled(self.cfg_adaptation.current_mode() == "dpo")
 
     def _collect_config(self) -> dict:
         """Return the loaded JSON with only exposed fields updated."""
@@ -476,6 +493,7 @@ class PreferenceWindow(QDialog):
         train["max_steps"] = self.cfg_max_steps.value()
         train["gradient_accumulation"] = self.cfg_grad_accum.value()
         train["checkpoint_every"] = self.cfg_ckpt_every.value()
+        train.update(self.cfg_adaptation.settings())
         return cfg
 
     @staticmethod
@@ -764,6 +782,58 @@ class PreferenceWindow(QDialog):
         if resume:
             args += ["--resume", resume]
         self._launch(args)
+
+    def _import_aligned_edit(self):
+        if self._job_running():
+            self._set_status("Wait for the current job before importing images.", error=True)
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Import an aligned before/after edit")
+        dialog.resize(650, 410)
+        layout = QVBoxLayout(dialog)
+        note = QLabel("Choose the original image and its edited version at identical dimensions. "
+                      "Keep the framing aligned. Import copies both files; you choose the winner in Rate.")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        source = self._file_row(form, "Original image (A)", "Images (*.png *.jpg *.jpeg *.webp)")
+        target = self._file_row(form, "Edited image (B)", "Images (*.png *.jpg *.jpeg *.webp)")
+        prompt = QPlainTextEdit()
+        prompt.setMaximumHeight(90)
+        negative = QPlainTextEdit()
+        negative.setMaximumHeight(65)
+        current = self._current()
+        if current:
+            prompt.setPlainText(current["prompt"])
+            negative.setPlainText(current["negative_prompt"])
+        form.addRow("Shared scene prompt", prompt)
+        form.addRow("Negative prompt (optional)", negative)
+        layout.addLayout(form)
+        error = QLabel()
+        error.setWordWrap(True)
+        layout.addWidget(error)
+        buttons = QHBoxLayout()
+        submit, cancel = QPushButton("Copy pair for review"), QPushButton("Cancel")
+        for button in (submit, cancel):
+            button.setAutoDefault(False)
+            buttons.addWidget(button)
+        cancel.clicked.connect(dialog.reject)
+        def accept():
+            if not prompt.toPlainText().strip() or not all(Path(x.text()).is_file() for x in (source, target)):
+                error.setText("Choose both existing images and enter the shared scene prompt.")
+                return
+            dialog.accept()
+        submit.clicked.connect(accept)
+        layout.addLayout(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        try:
+            manifest = self._jobs_dir() / ("import-" + uuid.uuid4().hex + ".json")
+            atomic_json(manifest, [{"source": source.text(), "target": target.text(), "aligned": True,
+                                   "prompt": prompt.toPlainText(), "negative_prompt": negative.toPlainText()}])
+            self._launch(["import-pairs", "--manifest", str(manifest)])
+        except (ValueError, OSError) as exc:
+            self._set_status(str(exc), error=True)
 
     def _launch_combine(self):
         if self._job_running():

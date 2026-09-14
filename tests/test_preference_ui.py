@@ -85,6 +85,24 @@ class PreferenceUITests(unittest.TestCase):
         self.assertEqual(cfg['training']['alpha'], 12.5)
         self.assertEqual(cfg['training']['strength_weights'], {'slight':.3})
 
+    def test_edit_modes_keep_values_and_disable_dpo_only_controls(self):
+        options = self.window.cfg_adaptation
+        options.method_combo.setCurrentIndex(options.method_combo.findData('leco'))
+        options.target_edit.setPlainText('a cup\nwith tea')
+        options.positive_edit.setPlainText('a blue cup')
+        options.neutral_edit.setPlainText('a cup')
+        self.assertFalse(self.window.cfg_beta.isEnabled())
+        cfg = self.window._collect_config()
+        self.assertEqual(cfg['training']['leco']['target'], 'a cup\nwith tea')
+        self.assertEqual(cfg['training']['leco']['unconditional'], '')
+        options.method_combo.setCurrentIndex(options.method_combo.findData('addift'))
+        self.assertEqual(options.pages.currentIndex(), 1)
+        self.assertEqual(options.min_timestep.value(), 400)
+        self.assertIsNotNone(options.min_timestep.parentWidget().layout())
+        options.method_combo.setCurrentIndex(options.method_combo.findData('dpo'))
+        self.assertTrue(self.window.cfg_beta.isEnabled())
+        self.assertEqual(options.target_edit.toPlainText(), 'a cup\nwith tea')
+
     def test_prompt_rows_add_remove_and_save_load_preserve_each_setting(self):
         editor = self.window.cfg_prompts
         editor.add_btn.click()
